@@ -64,7 +64,7 @@ void loop() {
 
   if (pubsub.connect("washing-machine")) {
     Serial.println("MQTT conntected");
-    pubsub.publish("/devices/deadbeeffeed", stream.c_str());
+    pubsub.publish("devices/deadbeeffeed", stream.c_str());
     Serial.println("MQTT message published");
     pubsub.disconnect();
     Serial.println("MQTT disconnected");
