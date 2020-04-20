@@ -1,70 +1,60 @@
 #include <SPI.h>
 #include <Ethernet.h>
-#include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <avr/wdt.h>
 #include "settings.h"
-#include "time.h"
 
 byte mac[] = MAC_ADDRESS;
 
 EthernetClient client;
 PubSubClient pubsub(client);
-char time_epoch_topic[] = "time/epoch"
-
-void mqtt_callback(char* topic, byte* payload, unsigned int length) {
-  if (strcmp(topic, time_epoch_topic) == 0) {
-    uint32 epoch = atol(payload);
-    if (epoch > 1540000000) {
-      time::set(epoch);
-      Serial.print("Time set to ");
-      Serial.println(epoch);
-    }
-  }
-}
+const char base_topic[] = "homeassistant/sensor/0x1587373390/vibration";
+const char config_payload[] = R"EOF(
+{"name": "Washing Machine",
+"unique_id": "0x1587373390-vibration",
+"device": {"identifiers": "0x1587373390"},
+"state_topic": "homeassistant/sensor/0x1587373390/vibration/state",
+"unit_of_measurement": "rpm"}
+)EOF";
 
 void setup() {
   // Open serial communications and wait for port to open:
   Serial.begin(115200);
 
+  // Provide GND to the accelerometer module.
   pinMode(A2, OUTPUT);
-  analogWrite(A0, LOW);
+  digitalWrite(A2, 0);
 
-  // start the Ethernet connection and the server:
-  Ethernet.begin(mac);
+  while (Ethernet.linkStatus() == LinkOFF) {
+    delay(1000);
+    Serial.println("waiting for carrier...");
+  }
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("problem with dhcp");
+    for(;;);
+  }
   Serial.print("Washing machine is at ");
   Serial.println(Ethernet.localIP());
   pubsub.setServer(MQTT_SERVER, 1883);
-  pubsub.setCallback(mqtt_callback);
-}
-
-void idle(int seconds) {
-  while (seconds--) {
-      delay(1000);
-      pubsub.loop();
+  String config_topic = String(base_topic) + "/config";
+  if (pubsub.connect("washing-machine")) {
+    Serial.println(config_topic.c_str());
+    pubsub.publish(config_topic.c_str(), config_payload);
+    Serial.println("pushed configuration");
   }
 }
 
-void report(float value) {
-  StaticJsonBuffer<200> jsonBuffer;
-  JsonObject& root = jsonBuffer.createObject();
-  root["total"] = value;
-  uint32 timestamp = time::get_current();
-  if (timestamp > 0) {
-    root["timestamp"] = timestamp;
-  }
-
-  String stream;
-  root.printTo(stream);
-
-  pubsub.publish("devices/deadbeeffeed", stream.c_str());
+void report(long value) {
+  String str_value = String(value);
+  String state_topic = String(base_topic) + "/state";
+  pubsub.publish(state_topic.c_str(), str_value.c_str());
   Serial.println("MQTT message published");
 }
 
 void loop() {
   Ethernet.maintain();
 
-  int samples = 100;
+  int samples = 600; // ~1 min worth of samples
   float deltax = 0;
   float deltay = 0;
   float deltaz = 0;
@@ -76,8 +66,6 @@ void loop() {
   oldz = analogRead(A3);
 
   if (pubsub.connect("washing-machine")) {
-    pubsub.subscribe(time_epoch_topic);
-
     Serial.println("MQTT connected");
     while (samples--) {
       x = analogRead(A5);
@@ -92,10 +80,9 @@ void loop() {
       oldy = y;
       oldz = z;
 
-      delay(10);
+      delay(100);
+      pubsub.loop();
     }
-
-    idle(30); // hopefully we'll acquire a timestamp here
 
     report(deltax + deltay + deltaz);
 
