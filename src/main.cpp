@@ -30,6 +30,8 @@ R"EOF(
 {"name": "Wash Room Temperature",
 "unique_id": "0x1587373390-t",
 "device": {"identifiers": "0x1587373390"},
+"device_class": "temperature",
+"unit_of_measurement": "°C",
 "state_topic": "homeassistant/sensor/0x1587373390/temperature/state"}
 )EOF" };
 
@@ -124,7 +126,7 @@ void reportTemperature(double value) {
   strcat_P(topic, sensor_kind[1]);
   strcat(topic, "/state");
   memset(mqtt_payload, 0x0, PAYLOAD_LENGTH);
-  dtostrf(value, 6, 3, mqtt_payload);
+  dtostrf(value, 4, 2, mqtt_payload);
 
   Serial.println(topic);
   Serial.println(mqtt_payload);
