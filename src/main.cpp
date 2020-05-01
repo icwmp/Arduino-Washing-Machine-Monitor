@@ -137,6 +137,7 @@ void reportTemperature(double value) {
 
 void loop() {
   Ethernet.maintain();
+  sensors.requestTemperatures();
 
   int samples = 600; // ~1 min worth of samples
   float deltax = 0;
