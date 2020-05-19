@@ -105,13 +105,13 @@ void setup() {
   configureAll();
 }
 
-void reportVibrations(long value) {
+void reportVibrations(float value) {
   memset(topic, 0x0, TOPIC_LENGTH);
   strcat_P(topic, device_topic);
   strcat_P(topic, sensor_kind[0]);
   strcat(topic, "/state");
   memset(mqtt_payload, 0x0, PAYLOAD_LENGTH);
-  ltoa(value, mqtt_payload, 10);
+  dtostrf(value, 5, 3, mqtt_payload);
 
   Serial.println(topic);
   Serial.println(mqtt_payload);
@@ -139,7 +139,7 @@ void loop() {
   Ethernet.maintain();
   sensors.requestTemperatures();
 
-  int samples = 600; // ~1 min worth of samples
+  int samples = 3 * 600; // ~3 min worth of samples
   float deltax = 0;
   float deltay = 0;
   float deltaz = 0;
@@ -169,7 +169,7 @@ void loop() {
       pubsub.loop();
     }
 
-    reportVibrations(deltax + deltay + deltaz);
+    reportVibrations(log10(deltax + deltay + deltaz));
     float value = sensors.getTempC(ds18b20_address);
     if (value == DEVICE_DISCONNECTED_C) {
       Serial.println(F("Can't read temperature"));
