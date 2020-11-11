@@ -17,6 +17,8 @@ PubSubClient pubsub(client);
 #define TOPIC_LENGTH 64
 #define PAYLOAD_LENGTH 20
 
+void (*reset) (void) = 0;
+
 const char device_topic[] PROGMEM = "homeassistant/sensor/0x1587373390";
 const char sensor_kind[][13] PROGMEM = { "/vibration", "/temperature" };
 const char config_payload[][250] PROGMEM = { R"EOF(
@@ -81,7 +83,7 @@ void setup() {
 
   if (sensors.getDS18Count() == 0) {
     Serial.println(F("No DS18B20, looping"));
-    for(;;);
+    reset();
   }
   sensors.getAddress(ds18b20_address, 0);
   sensors.setResolution(12);
@@ -97,9 +99,9 @@ void setup() {
   
   if (Ethernet.begin(ds18b20_address) == 0) {
     Serial.println(F("dhcp error. stopping."));
-    for(;;);
+    reset();
   }
-  Serial.print("Washing machine is at ");
+  Serial.print(F("Washing machine is at "));
   Serial.println(Ethernet.localIP());
   pubsub.setServer(MQTT_SERVER, 1883);
   configureAll();
@@ -116,7 +118,8 @@ void reportVibrations(float value) {
   Serial.println(topic);
   Serial.println(mqtt_payload);
   if (!pubsub.publish(topic, mqtt_payload)) {
-
+    Serial.println(F("Can't report vibrations"));
+    reset();
   }
 }
 
@@ -131,7 +134,8 @@ void reportTemperature(double value) {
   Serial.println(topic);
   Serial.println(mqtt_payload);
   if (!pubsub.publish(topic, mqtt_payload)) {
-    Serial.println("not published!");
+    Serial.println(F("not published!"));
+    reset();
   }
 }
 
@@ -151,7 +155,7 @@ void loop() {
   oldz = analogRead(A3);
 
   if (pubsub.connect("washing-machine")) {
-    Serial.println("MQTT connected");
+    Serial.println(F("MQTT connected"));
     while (samples--) {
       x = analogRead(A5);
       y = analogRead(A4);
@@ -167,6 +171,11 @@ void loop() {
 
       delay(100);
       pubsub.loop();
+
+      if (samples % 100 == 0) {
+        Serial.print(F("Sampling ... "));
+        Serial.println(samples);
+      }
     }
 
     reportVibrations(log10(deltax + deltay + deltaz));
@@ -178,6 +187,8 @@ void loop() {
     }
     
     pubsub.disconnect();
-    Serial.println("MQTT disconnected");
+    Serial.println(F("MQTT disconnected"));
+  } else {
+    reset();
   }
 }
