@@ -4,6 +4,7 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <avr/pgmspace.h>
+#include <avr/wdt.h>
 #include "settings.h"
 
 OneWire wire(2); // PIN 2
@@ -17,7 +18,13 @@ PubSubClient pubsub(client);
 #define TOPIC_LENGTH 64
 #define PAYLOAD_LENGTH 20
 
-void (*reset) (void) = 0;
+void reset() {
+  Serial.println("Resetting!");
+  Serial.flush();
+  
+  wdt_enable(WDTO_60MS);
+  while (1) {};
+}
 
 const char device_topic[] PROGMEM = "homeassistant/sensor/0x1587373390";
 const char sensor_kind[][13] PROGMEM = { "/vibration", "/temperature" };
