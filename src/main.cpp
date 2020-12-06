@@ -17,6 +17,9 @@ PubSubClient pubsub(client);
 #define TOPIC_LENGTH 64
 #define PAYLOAD_LENGTH 20
 #define ONEWIRE_PIN D3
+#define CLIENT_NAME "washing-machine"
+#define NUMBER_OF_SAMPLES 1000  // 1560ms for 1000 samples
+#define NUMBER_OF_RUNS 120000 / 1560 // 2 mins worth of samples
 
 OneWire wire(ONEWIRE_PIN); // PIN 2
 DallasTemperature sensors(&wire);
@@ -50,25 +53,13 @@ R"EOF(
 char mqtt_payload[PAYLOAD_LENGTH]; 
 char topic[TOPIC_LENGTH];
 
-void printAddress(DeviceAddress deviceAddress)
-{ 
-  for (uint8_t i = 0; i < 8; i++)
-  {
-    Serial.print("0x");
-    if (deviceAddress[i] < 0x10) Serial.print("0");
-    Serial.print(deviceAddress[i], HEX);
-    if (i < 7) Serial.print(", ");
-  }
-  Serial.println("");
-}
-
 void configureAll() {
   for (int i = 0; i < NUM_SENSORS; i++) {
     memset(topic, 0x0, TOPIC_LENGTH);
     strcat(topic, device_topic);
     strcat(topic, sensor_kind[i]);
     strcat(topic, "/config");
-    if (pubsub.connect("washing-machine")) {
+    if (pubsub.connect(CLIENT_NAME)) {
       Serial.println(topic);
       if (pubsub.publish(topic, config_payload[i], true)) {
         Serial.println("published.");
@@ -79,20 +70,13 @@ void configureAll() {
   }
 }
 
-/* int freeRam () {
-   extern int __heap_start, *__brkval;
-   int v;
-   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
-} */
+WiFiManager wifiManager;
 
 void setup_esp8266() {
-  if (!accel.begin()) {
-    Serial.println("Accelerometer not detected");
-    reset();
-  }
-  accel.setRange(ADXL345_RANGE_4_G);
+  wifiManager.setConfigPortalTimeout(60);
+  wifiManager.setConnectTimeout(60);
+  wifiManager.setMinimumSignalQuality(20);
 
-  WiFiManager wifiManager;
   if(!wifiManager.autoConnect()) {
     Serial.println("failed to connect and hit timeout");
     //reset and try again, or maybe put it to deep sleep
@@ -102,20 +86,33 @@ void setup_esp8266() {
   Serial.println(WiFi.localIP());
 }
 
-void setup() {
-  // Open serial communications and wait for port to open:
-  Serial.begin(115200);
-  sensors.begin();
+void setup_sensors() {
+  // ADXL345
+  if (!accel.begin()) {
+    Serial.println("Accelerometer not detected");
+    reset();
+  }
+  accel.setRange(ADXL345_RANGE_4_G);
+  accel.setDataRate(ADXL345_DATARATE_3200_HZ);
 
+  // DS18B20
+  sensors.begin();
   if (sensors.getDS18Count() == 0) {
     Serial.println("No DS18B20, looping");
     reset();
   }
   sensors.getAddress(ds18b20_address, 0);
   sensors.setResolution(12);
+}
+
+void setup() {
+  // Open serial communications and wait for port to open:
+  Serial.begin(115200);
+  Serial.setDebugOutput(true);
 
   setup_esp8266();
- 
+  setup_sensors();
+
   pubsub.setServer(MQTT_SERVER, 1883);
   configureAll();
 }
@@ -147,15 +144,13 @@ void reportTemperature(double value) {
   Serial.println(topic);
   Serial.println(mqtt_payload);
   if (!pubsub.publish(topic, mqtt_payload)) {
-    Serial.println("not published!");
+    Serial.println("Can't report temperature");
     reset();
   }
 }
 
-void loop() {
-  sensors.requestTemperatures();
-
-  int samples = 3 * 600; // ~3 min worth of samples
+inline float runSampling(int howmany) {
+  float sum = 0;
   float deltax = 0;
   float deltay = 0;
   float deltaz = 0;
@@ -169,10 +164,10 @@ void loop() {
   oldy = event.acceleration.y;
   oldz = event.acceleration.z;
 
-  if (pubsub.connect("washing-machine")) {
-    Serial.println("MQTT connected");
-    while (samples--) {
+  for (int n = 0; n < howmany; n++) {
+      ESP.wdtFeed(); // should prevent the sensor hanging the ESP
       accel.getEvent(&event);
+
       x = event.acceleration.x;
       y = event.acceleration.y;
       z = event.acceleration.z;
@@ -185,16 +180,43 @@ void loop() {
       oldy = y;
       oldz = z;
 
-      delay(100);
-      pubsub.loop();
+      sum += deltax + deltay + deltaz;
+  }
+  return sum;
+}
 
-      if (samples % 100 == 0) {
-        Serial.print("Sampling ... ");
-        Serial.println(samples);
-      }
-    }
+float sampleVibrations(int nruns, bool debug) {
+  unsigned long t = millis();
+  if (debug) {
+    Serial.print("Starting sampling ... ");
+  }
 
-    reportVibrations(log10(deltax + deltay + deltaz));
+  float sum = 0;
+  for (int n = 0; n < nruns; n++) {
+    sum += runSampling(NUMBER_OF_SAMPLES);
+  }
+
+  if (debug) {
+    t = millis() - t;
+    Serial.print("finished in ");
+    Serial.println(t);
+  }
+  
+  return sum / nruns;
+}
+
+void loop() {
+  sensors.requestTemperatures();
+  float averagedSamples = sampleVibrations(NUMBER_OF_RUNS, true);
+  
+  pubsub.loop();
+
+  Serial.println(log10(averagedSamples));
+
+  if (pubsub.connect(CLIENT_NAME)) {
+    Serial.println("MQTT connected");
+
+    reportVibrations(log10(averagedSamples));
     float value = sensors.getTempC(ds18b20_address);
     if (value == DEVICE_DISCONNECTED_C) {
       Serial.println("Can't read temperature");
